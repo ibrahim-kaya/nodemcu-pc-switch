@@ -31,6 +31,17 @@
 #include <LittleFS.h>
 #include "config.h"
 
+#ifdef LCD_ENABLED
+#include <Adafruit_GFX.h>
+#include <Adafruit_PCD8544.h>
+// Software SPI: CLK, DIN, DC, CE, RST
+Adafruit_PCD8544 lcd(LCD_CLK, LCD_DIN, LCD_DC, LCD_CE, LCD_RST);
+static unsigned long lastDisplayMs = 0;
+static bool          lcdBootPhase  = true;   // true → boot mesajları gösterilir
+// Forward declaration — tanım LCD bölümünde, ama WiFi/MQTT fonksiyonları önce derleniyor
+static void lcdBootMsg(const char* msg, const char* detail = nullptr);
+#endif
+
 // ─── Çalışma zamanı config yapısı ────────────────────────────────────────────
 struct Config {
     char     wifi_ssid[64];
@@ -271,14 +282,29 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
 static bool mqttConnect() {
     Serial.printf("[MQTT] Bağlanıyor: %s:%d\n", cfg.mqtt_broker, cfg.mqtt_port);
+#ifdef LCD_ENABLED
+    lcdBootMsg("MQTT baglaniyor", cfg.mqtt_broker);
+#endif
     bool ok = mqttClient.connect(
         cfg.mqtt_client_id, cfg.mqtt_user, cfg.mqtt_password,
         MQTT_TOPIC_LWT, 1, true, "{\"online\":false}"
     );
-    if (!ok) { Serial.printf("[MQTT] Başarısız rc=%d\n", mqttClient.state()); return false; }
+    if (!ok) {
+        Serial.printf("[MQTT] Başarısız rc=%d\n", mqttClient.state());
+#ifdef LCD_ENABLED
+        char errmsg[16];
+        snprintf(errmsg, sizeof(errmsg), "Hata rc=%d", mqttClient.state());
+        lcdBootMsg("MQTT basarisiz", errmsg);
+        delay(1500);
+#endif
+        return false;
+    }
     mqttClient.subscribe(MQTT_TOPIC_CMD);
     mqttClient.publish(MQTT_TOPIC_LWT, "{\"online\":true}", true);
     Serial.println("[MQTT] Bağlandı");
+#ifdef LCD_ENABLED
+    lcdBootMsg("MQTT baglandi");
+#endif
     return true;
 }
 
@@ -299,6 +325,9 @@ static void startSetupAP() {
     setupMode = true;
     Serial.printf("[WiFi] AP modu: SSID=%s  IP=192.168.4.1\n", SETUP_AP_SSID);
     Serial.println("[WiFi] Tarayıcıda http://192.168.4.1/config adresini aç");
+#ifdef LCD_ENABLED
+    lcdBootMsg("Kurulum AP modu", "192.168.4.1");
+#endif
 }
 
 static void connectWiFi() {
@@ -307,6 +336,9 @@ static void connectWiFi() {
     WiFi.mode(WIFI_STA);
     WiFi.begin(cfg.wifi_ssid, cfg.wifi_password);
     Serial.printf("[WiFi] Bağlanıyor: %s", cfg.wifi_ssid);
+#ifdef LCD_ENABLED
+    lcdBootMsg("WiFi baglaniyor", cfg.wifi_ssid);
+#endif
     unsigned long start = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_TIMEOUT_MS) {
         delay(250);
@@ -316,6 +348,9 @@ static void connectWiFi() {
     if (WiFi.status() == WL_CONNECTED) {
         setupMode = false;
         Serial.printf("\n[WiFi] Bağlandı: %s\n", WiFi.localIP().toString().c_str());
+#ifdef LCD_ENABLED
+        lcdBootMsg("WiFi baglandi", WiFi.localIP().toString().c_str());
+#endif
     } else {
         Serial.println("\n[WiFi] Bağlanamadı — AP moduna geçiliyor");
         startSetupAP();
@@ -552,6 +587,108 @@ static void setupOTA() {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// LCD (Nokia 5110) — sadece LCD_ENABLED tanımlıysa derlenir
+// 84x48 px, textSize=1: her karakter 6x8 px → 14 sütun / 5 satır (10px aralık)
+// ═════════════════════════════════════════════════════════════════════════════
+
+#ifdef LCD_ENABLED
+
+// Sayfayı ortala (x ekseni, 84 px genişlik)
+static int16_t lcdCenterX(const char* text) {
+    return max(0, (84 - (int16_t)(strlen(text) * 6)) / 2);
+}
+
+// Boot aşaması mesajı — başlık + ince çizgi + durum satırı + opsiyonel detay
+// Sadece lcdBootPhase == true iken çizer (normal çalışmada çağrılsa bile etki etmez)
+static void lcdBootMsg(const char* msg, const char* detail) {
+    if (!lcdBootPhase) return;
+    lcd.clearDisplay();
+    lcd.setTextColor(BLACK);
+    lcd.setTextSize(1);
+    // Başlık
+    lcd.setCursor(lcdCenterX("pc-switch"), 0);
+    lcd.print("pc-switch");
+    // Ayırıcı çizgi
+    lcd.drawFastHLine(0, 10, 84, BLACK);
+    // Durum mesajı
+    lcd.setCursor(0, 14);
+    lcd.print(msg);
+    // Opsiyonel detay (2. satır)
+    if (detail) {
+        lcd.setCursor(0, 26);
+        lcd.print(detail);
+    }
+    lcd.display();
+}
+
+static void setupDisplay() {
+    lcd.begin();
+    lcd.setContrast(LCD_CONTRAST);
+    lcd.clearDisplay();
+    lcdBootMsg("Baslatiliyor...");
+    Serial.println("[LCD] Baslatildi");
+}
+
+static void updateDisplay() {
+    if (millis() - lastDisplayMs < LCD_UPDATE_MS) return;
+    lastDisplayMs = millis();
+
+    lcd.clearDisplay();
+    lcd.setTextSize(1);
+    lcd.setTextColor(BLACK);
+
+    // ── Satır 0 (y=0): Başlık ───────────────────────────────────────────────
+    lcd.setCursor(lcdCenterX("pc-switch"), 0);
+    lcd.print("pc-switch");
+
+    // ── Satır 1 (y=10): WiFi ────────────────────────────────────────────────
+    lcd.setCursor(0, 10);
+    if (setupMode) {
+        lcd.print("AP:kurulum modu");
+    } else if (WiFi.status() == WL_CONNECTED) {
+        String ssid = String(cfg.wifi_ssid);
+        if (ssid.length() > 11) ssid = ssid.substring(0, 10) + "~";
+        lcd.print("W:");
+        lcd.print(ssid);
+    } else {
+        lcd.print("WiFi:Baglaniyor");
+    }
+
+    // ── Satır 2 (y=20): IP ──────────────────────────────────────────────────
+    lcd.setCursor(0, 20);
+    if (setupMode) {
+        lcd.print("192.168.4.1");
+    } else {
+        lcd.print(WiFi.localIP().toString());
+    }
+
+    // ── Satır 3 (y=30): MQTT ────────────────────────────────────────────────
+    lcd.setCursor(0, 30);
+    if (setupMode) {
+        lcd.print("MQTT: --");
+    } else {
+        lcd.print("MQTT:");
+        lcd.print(mqttClient.connected() ? "BAGLI" : "KOPUK");
+    }
+
+    // ── Satır 4 (y=40): Röle (sol) + RSSI (sağ) ─────────────────────────────
+    // "Role:AKTIF" = 10 karakter = 60px → RSSI değeri için 24px kaldı (4 karakter)
+    lcd.setCursor(0, 40);
+    lcd.print("Role:");
+    lcd.print(relayActive ? "AKTIF" : "Pasif");
+    if (!setupMode && WiFi.status() == WL_CONNECTED) {
+        String rssi = String(WiFi.RSSI());        // ör. "-58"
+        int16_t rx = 84 - (int16_t)(rssi.length() * 6);
+        lcd.setCursor(rx, 40);
+        lcd.print(rssi);
+    }
+
+    lcd.display();
+}
+
+#endif  // LCD_ENABLED
+
+// ═════════════════════════════════════════════════════════════════════════════
 // setup() / loop()
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -568,7 +705,14 @@ void setup() {
     Serial.begin(115200);
     Serial.println("\n\n[Boot] pc-switch başlıyor...");
 
+#ifdef LCD_ENABLED
+    setupDisplay();
+#endif
+
     // LittleFS başlat
+#ifdef LCD_ENABLED
+    lcdBootMsg("Dosya sistemi...");
+#endif
     if (!LittleFS.begin()) {
         Serial.println("[LittleFS] Mount başarısız — formatlanıyor...");
         LittleFS.format();
@@ -576,11 +720,17 @@ void setup() {
     }
 
     // Config yükle ve WiFi'ye bağlan (başarısız → AP modu)
+#ifdef LCD_ENABLED
+    lcdBootMsg("Config yukleniyor");
+#endif
     configLoaded = loadConfig();
-    connectWiFi();
+    connectWiFi();   // → içinde LCD mesajları var
 
     // Normal mod servisleri
     if (!setupMode) {
+#ifdef LCD_ENABLED
+        lcdBootMsg("mDNS & OTA...");
+#endif
         if (MDNS.begin(cfg.mdns_hostname))
             Serial.printf("[mDNS] %s.local\n", cfg.mdns_hostname);
 
@@ -591,10 +741,13 @@ void setup() {
         mqttClient.setCallback(mqttCallback);
         mqttClient.setKeepAlive(MQTT_KEEPALIVE);
         mqttClient.setBufferSize(512);
-        mqttConnect();
+        mqttConnect();   // → içinde LCD mesajları var
     }
 
     // HTTP sunucu — her modda çalışır
+#ifdef LCD_ENABLED
+    lcdBootMsg("HTTP baslatiliyor");
+#endif
     server.collectHeaders("X-API-Key");
     server.on("/", HTTP_GET, []() {
         server.sendHeader("Location", "/config");
@@ -616,12 +769,24 @@ void setup() {
         Serial.printf("[Boot] Hazır — http://%s/  veya  http://%s.local/\n",
             WiFi.localIP().toString().c_str(), cfg.mdns_hostname);
     }
+
+    // Boot tamamlandı — artık normal ekran güncelleme devreye girer
+#ifdef LCD_ENABLED
+    lcdBootMsg("Hazir!");
+    delay(600);
+    lcdBootPhase = false;
+    lastDisplayMs = 0;   // ilk updateDisplay hemen çalışsın
+#endif
 }
 
 void loop() {
     handleResetButton();
     handleRelayTimer();
     server.handleClient();
+
+#ifdef LCD_ENABLED
+    updateDisplay();
+#endif
 
     if (!setupMode) {
         MDNS.update();

@@ -17,19 +17,26 @@ NodeMCU V3 (ESP8266) ve 5V röle kullanarak bilgisayarın güç düğmesini WiFi
 9. [Home Assistant Entegrasyonu](#9-home-assistant-entegrasyonu)
 10. [Ayarları Değiştirme](#10-ayarları-değiştirme)
 11. [Fabrika Sıfırlama](#11-fabrika-sıfırlama)
-12. [Sorun Giderme](#12-sorun-giderme)
+12. [Nokia 5110 LCD Ekran (Opsiyonel)](#12-nokia-5110-lcd-ekran-opsiyonel)
+13. [Sorun Giderme](#13-sorun-giderme)
 
 ---
 
 ## 1. Gereksinimler
 
-### Donanım
+### Donanım (Zorunlu)
 | Parça | Adet |
 |---|---|
 | NodeMCU V3 CH-340 (ESP8266) | 1 |
 | 1 Kanal 5V Röle Modülü (mavi/yeşil PCB) | 1 |
 | Jumper kablo (dişi-dişi) | 3 |
 | Micro USB kablo | 1 |
+
+### Donanım (Opsiyonel — LCD Ekran)
+| Parça | Adet | Not |
+|---|---|---|
+| Nokia 5110 LCD modülü (PCD8544, 84x48) | 1 | 3.3V uyumlu modül tercih edin |
+| Jumper kablo (dişi-dişi) | 5 | |
 
 ### Yazılım
 | Program | Notlar |
@@ -116,12 +123,16 @@ NO  ──────────────────── PWR_SW Pin 2 (P
 
 **Tools → Manage Libraries** açın, sırayla aratıp yükleyin:
 
-| Kütüphane | Yayıncı | Versiyon |
-|---|---|---|
-| PubSubClient | Nick O'Leary | En güncel |
-| ArduinoJson | Benoit Blanchon | **6.x** (7.x değil!) |
+| Kütüphane | Yayıncı | Versiyon | Zorunlu mu? |
+|---|---|---|---|
+| PubSubClient | Nick O'Leary | En güncel | Evet |
+| ArduinoJson | Benoit Blanchon | **6.x** (7.x değil!) | Evet |
+| Adafruit PCD8544 Nokia 5110 LCD library | Adafruit | En güncel | Yalnızca LCD kullanılacaksa |
+| Adafruit GFX Library | Adafruit | En güncel | Yalnızca LCD kullanılacaksa |
 
 > ArduinoJson kurulumunda versiyon seçme ekranı çıkarsa "6.21.x" seçin.
+>
+> Adafruit PCD8544 kurulumunda bağımlılık sorarsa "Install All" tıklayın (Adafruit GFX otomatik kurulur).
 
 ---
 
@@ -502,7 +513,69 @@ Sıfırlama sonrası cihaz `pcswitch-setup` AP moduna geçer, Bölüm 5'ten yeni
 
 ---
 
-## 12. Sorun Giderme
+## 12. Nokia 5110 LCD Ekran (Opsiyonel)
+
+LCD ekran tamamen opsiyoneldir. Takılı olmasa bile kod sorunsuz çalışır.
+
+### 12.1 Ekranda Gösterilen Bilgiler
+
+```
+┌────────────────┐
+│   pc-switch    │  ← Başlık (ortalı)
+│ W:EvinizinWiFi │  ← Bağlı ağ adı (AP modunda: "AP:kurulum modu")
+│ 192.168.1.45   │  ← Yerel IP adresi
+│ MQTT:BAGLI     │  ← MQTT bağlantı durumu
+│ Role:Pasif -58 │  ← Röle durumu + WiFi RSSI (dBm, sağa hizalı)
+└────────────────┘
+```
+
+### 12.2 Donanım Bağlantısı
+
+> ⚠️ **Voltaj:** Nokia 5110 modülünün **3.3V uyumlu** olduğundan emin olun. Çoğu mavi PCB modül 3.3V–5V arasında çalışır; sinyal pinleri için 3.3V yeterlidir.
+
+```
+NodeMCU V3          Nokia 5110
+──────────          ──────────────────────
+D5 (GPIO14) ─────── 5: CLK
+D7 (GPIO13) ─────── 4: DIN
+D6 (GPIO12) ─────── 3: DC
+D2 (GPIO4)  ─────── 2: CE
+D0 (GPIO16) ─────── 1: RST
+3V3         ─────── 6: VCC
+3V3         ─────── 7: BL  (arka ışık — her zaman açık)
+GND         ─────── 8: GND
+```
+
+> BL pinini NodeMCU'nun herhangi bir dijital pinine bağlarsanız arka ışığı yazılımdan kontrol edebilirsiniz. Sürekli açık olmasını istiyorsanız 3V3'e bağlamak yeterlidir.
+
+### 12.3 Yazılım Aktivasyonu
+
+1. `config.h` dosyasını Arduino IDE'de açın.
+2. Şu satırı bulun:
+   ```cpp
+   // #define LCD_ENABLED
+   ```
+3. Başındaki `//` yi kaldırın:
+   ```cpp
+   #define LCD_ENABLED
+   ```
+4. Kodu derleyip yükleyin.
+
+LCD takılı **değilken** `LCD_ENABLED` tanımlıysa ekran kütüphanesi boşlukta yazacağından garip davranışlar olabilir. Ekranı çıkarmadan önce `//` yi geri ekleyin.
+
+### 12.4 Kontrast Ayarı
+
+Ekranda hiçbir şey görünmüyorsa veya ekran tamamen siyahsa `config.h` içindeki değeri ayarlayın:
+
+```cpp
+#define LCD_CONTRAST   50   // 0-127; genellikle 40-60 arası iyi çalışır
+```
+
+Düşük değer → açık/soluk, yüksek değer → koyu/dolu. Her ekran farklı olabilir.
+
+---
+
+## 13. Sorun Giderme
 
 ### Cihaz WiFi'ye bağlanamıyor
 
@@ -575,6 +648,11 @@ veya Serial Monitor'deki `[Boot] Hazır — http://192.168.1.XX/` satırındaki 
 | D1 (GPIO5) | Röle IN | Boot'ta HIGH — güvenli |
 | D3 (GPIO0) | Reset butonu | NodeMCU FLASH butonu |
 | LED_BUILTIN | Durum LED'i | Active LOW |
+| D5 (GPIO14) | LCD CLK *(opsiyonel)* | `LCD_ENABLED` tanımlıysa |
+| D7 (GPIO13) | LCD DIN *(opsiyonel)* | `LCD_ENABLED` tanımlıysa |
+| D6 (GPIO12) | LCD DC *(opsiyonel)* | `LCD_ENABLED` tanımlıysa |
+| D2 (GPIO4) | LCD CE *(opsiyonel)* | `LCD_ENABLED` tanımlıysa |
+| D0 (GPIO16) | LCD RST *(opsiyonel)* | `LCD_ENABLED` tanımlıysa |
 
 ### MQTT Topic'leri
 
