@@ -283,7 +283,7 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length) {
 static bool mqttConnect() {
     Serial.printf("[MQTT] Bağlanıyor: %s:%d\n", cfg.mqtt_broker, cfg.mqtt_port);
 #ifdef LCD_ENABLED
-    lcdBootMsg("MQTT baglaniyor", cfg.mqtt_broker);
+    lcdBootMsg("MQTT baglan...", cfg.mqtt_broker);
 #endif
     bool ok = mqttClient.connect(
         cfg.mqtt_client_id, cfg.mqtt_user, cfg.mqtt_password,
@@ -337,7 +337,7 @@ static void connectWiFi() {
     WiFi.begin(cfg.wifi_ssid, cfg.wifi_password);
     Serial.printf("[WiFi] Bağlanıyor: %s", cfg.wifi_ssid);
 #ifdef LCD_ENABLED
-    lcdBootMsg("WiFi baglaniyor", cfg.wifi_ssid);
+    lcdBootMsg("WiFi baglan...", cfg.wifi_ssid);
 #endif
     unsigned long start = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_TIMEOUT_MS) {

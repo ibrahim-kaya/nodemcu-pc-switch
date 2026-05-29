@@ -49,9 +49,36 @@ NodeMCU V3 (ESP8266) ve 5V röle kullanarak bilgisayarın güç düğmesini WiFi
 
 ## 2. Donanım Bağlantısı
 
-> ⚠️ **Güvenlik:** Bağlantıları yapmadan önce NodeMCU'nun USB kablosunu çıkarın.
+> ⚠️ **Güvenlik:** Bağlantıları yapmadan önce bilgisayarın güç kablosunu prizden çekin.
 
-### NodeMCU → Röle Modülü
+### 2.1 Besleme Seçenekleri
+
+NodeMCU'ya iki farklı şekilde güç verebilirsiniz:
+
+| Yöntem | Bağlantı | PC kapalıyken çalışır mı? |
+|---|---|---|
+| **USB şarj adaptörü** (önerilen) | USB girişi | ✅ Evet — her zaman açık |
+| **PSU 5V çıkışı (kasa içi, düzenli)** | VIN + GND | ❌ Hayır — PC açıkken |
+
+> **PSU 5V ile beslemede kritik kısıtlama:** ATX güç kaynağının 5V çıkışları yalnızca bilgisayar **açıkken** aktif olur. PC kapalıyken NodeMCU güç alamaz; bu durumda uzaktan açma komutu çalışmaz. PSU bağlantısı yalnızca **reset ve durum izleme** kullanım senaryolarına uygundur.
+>
+> Kapalı PC'yi uzaktan **açabilmek** istiyorsanız NodeMCU'yu USB şarj adaptörü veya her zaman açık bir USB hub üzerinden besleyin.
+
+### 2.2 PSU 5V ile Besleme (Kasa İçi Kurulum)
+
+PSU'dan herhangi bir **5V (+)** ve **GND (−)** noktası kullanılabilir (Molex, SATA güç, konnektör ucu vb.).
+
+```
+PSU 5V Çıkışı       NodeMCU V3
+─────────────       ──────────
+5V  (+)        ──── VIN
+GND (−)        ──── GND
+```
+
+> - NodeMCU'nun VIN pini 4.5V–9V aralığını kabul eder; PSU 5V güvenlidir.
+> - **12V hattına kesinlikle bağlamayın** — NodeMCU'yu bozar.
+
+### 2.3 NodeMCU → Röle Modülü
 
 ```
 NodeMCU V3          Röle Modülü
@@ -61,9 +88,9 @@ GND        ──────── GND
 3V3        ──────── VCC
 ```
 
-> Röle tetiklenmiyorsa (klik sesi gelmiyorsa) VCC kablosunu 3V3'ten **Vin** pinine taşıyın. Vin, USB üzerinden gelen 5V'tur.
+> Röle tetiklenmiyorsa (klik sesi gelmiyorsa) VCC kablosunu 3V3'ten **VIN** pinine taşıyın.
 
-### Röle → Anakart Güç Header'ı
+### 2.4 Röle → Anakart Güç Header'ı
 
 ```
 Röle Terminalleri        Anakart
@@ -76,18 +103,20 @@ NO  ──────────────────── PWR_SW Pin 2 (P
 
 > Mevcut fiziksel güç düğmesini **sökmeyiniz.** Röle, güç düğmesiyle paralel çalışır — ikisi de aynı anda kullanılabilir.
 
-### Bağlantı Şeması (Özet)
+### 2.5 Bağlantı Şeması (Özet)
 
 ```
-[USB Güç / PC kasası USB]
-        │
-   [NodeMCU V3]
-        │  D1
-   [Röle IN]──[Röle COM + NO]
-                    │
-            [Anakart PWR_SW]
-                    │
-            [Fiziksel güç düğmesi] (paralelde kalır)
+[USB adaptör]  VEYA  [PSU 5V + GND]  ← PC kapalıyken açmak istiyorsanız USB adaptör
+      │                     │
+      └──────────┬───────────┘
+                 │
+           [NodeMCU V3]
+                 │  D1
+           [Röle IN]──[Röle COM + NO]
+                              │
+                      [Anakart PWR_SW]
+                              │
+                      [Fiziksel güç düğmesi] (paralelde kalır)
 ```
 
 ---
