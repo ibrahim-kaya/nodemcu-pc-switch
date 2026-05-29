@@ -1,0 +1,599 @@
+# pc-switch Kullanım Kılavuzu
+
+NodeMCU V3 (ESP8266) ve 5V röle kullanarak bilgisayarın güç düğmesini WiFi üzerinden uzaktan kontrol etmeyi sağlayan sistem.
+
+---
+
+## İçindekiler
+
+1. [Gereksinimler](#1-gereksinimler)
+2. [Donanım Bağlantısı](#2-donanım-bağlantısı)
+3. [Arduino IDE Kurulumu](#3-arduino-ide-kurulumu)
+4. [Kodu Yükleme](#4-kodu-yükleme)
+5. [İlk Kurulum (Web Arayüzü)](#5-i̇lk-kurulum-web-arayüzü)
+6. [HiveMQ Cloud Broker Kurulumu](#6-hivemq-cloud-broker-kurulumu)
+7. [Kullanım](#7-kullanım)
+8. [Webhook Sunucusu (Website & Uygulama Entegrasyonu)](#8-webhook-sunucusu-website--uygulama-entegrasyonu)
+9. [Home Assistant Entegrasyonu](#9-home-assistant-entegrasyonu)
+10. [Ayarları Değiştirme](#10-ayarları-değiştirme)
+11. [Fabrika Sıfırlama](#11-fabrika-sıfırlama)
+12. [Sorun Giderme](#12-sorun-giderme)
+
+---
+
+## 1. Gereksinimler
+
+### Donanım
+| Parça | Adet |
+|---|---|
+| NodeMCU V3 CH-340 (ESP8266) | 1 |
+| 1 Kanal 5V Röle Modülü (mavi/yeşil PCB) | 1 |
+| Jumper kablo (dişi-dişi) | 3 |
+| Micro USB kablo | 1 |
+
+### Yazılım
+| Program | Notlar |
+|---|---|
+| [Arduino IDE 2.x](https://www.arduino.cc/en/software) | |
+| [Python 3.8+](https://www.python.org/downloads/) | `client.py` için |
+| `pip install paho-mqtt requests` | Python kütüphaneleri |
+
+---
+
+## 2. Donanım Bağlantısı
+
+> ⚠️ **Güvenlik:** Bağlantıları yapmadan önce NodeMCU'nun USB kablosunu çıkarın.
+
+### NodeMCU → Röle Modülü
+
+```
+NodeMCU V3          Röle Modülü
+──────────          ────────────────
+D1 (GPIO5) ──────── IN
+GND        ──────── GND
+3V3        ──────── VCC
+```
+
+> Röle tetiklenmiyorsa (klik sesi gelmiyorsa) VCC kablosunu 3V3'ten **Vin** pinine taşıyın. Vin, USB üzerinden gelen 5V'tur.
+
+### Röle → Anakart Güç Header'ı
+
+```
+Röle Terminalleri        Anakart
+─────────────────        ────────────────────────────
+COM ──────────────────── PWR_SW Pin 1 (PWR_BTN+)
+NO  ──────────────────── PWR_SW Pin 2 (PWR_BTN-)
+```
+
+**PWR_SW header'ını bulmak için:** Anakartın kullanım kılavuzuna bakın. Genellikle sağ alt köşede, "PWR_SW", "PW" veya "POWER SW" yazan 2 pinli bir header'dır.
+
+> Mevcut fiziksel güç düğmesini **sökmeyiniz.** Röle, güç düğmesiyle paralel çalışır — ikisi de aynı anda kullanılabilir.
+
+### Bağlantı Şeması (Özet)
+
+```
+[USB Güç / PC kasası USB]
+        │
+   [NodeMCU V3]
+        │  D1
+   [Röle IN]──[Röle COM + NO]
+                    │
+            [Anakart PWR_SW]
+                    │
+            [Fiziksel güç düğmesi] (paralelde kalır)
+```
+
+---
+
+## 3. Arduino IDE Kurulumu
+
+### 3.1 ESP8266 Board Paketi
+
+1. Arduino IDE'yi açın.
+2. **File → Preferences** (veya `Ctrl+,`)
+3. "Additional boards manager URLs" alanına şunu yapıştırın:
+   ```
+   https://arduino.esp8266.com/stable/package_esp8266com_index.json
+   ```
+4. **Tools → Board → Boards Manager** açın.
+5. Arama kutusuna `esp8266` yazın.
+6. **"esp8266 by ESP8266 Community"** → **Install**
+
+### 3.2 Board Ayarları
+
+**Tools** menüsünden sırayla seçin:
+
+| Ayar | Değer |
+|---|---|
+| Board | NodeMCU 1.0 (ESP-12E Module) |
+| Flash Size | **4MB (FS: 2MB, OTA: ~1019kB)** ← Kritik! |
+| CPU Frequency | 80 MHz |
+| Upload Speed | 115200 |
+
+> ⚠️ Flash Size yanlış seçilirse web arayüzü çalışmaz. Mutlaka **4MB (FS: 2MB, OTA: ~1019kB)** seçin.
+
+### 3.3 Gerekli Kütüphaneler
+
+**Tools → Manage Libraries** açın, sırayla aratıp yükleyin:
+
+| Kütüphane | Yayıncı | Versiyon |
+|---|---|---|
+| PubSubClient | Nick O'Leary | En güncel |
+| ArduinoJson | Benoit Blanchon | **6.x** (7.x değil!) |
+
+> ArduinoJson kurulumunda versiyon seçme ekranı çıkarsa "6.21.x" seçin.
+
+---
+
+## 4. Kodu Yükleme
+
+1. `pc-switch` klasörünü açın, `pc-switch.ino` dosyasına çift tıklayın.
+2. NodeMCU'yu bilgisayara USB ile bağlayın.
+3. **Tools → Port** → `COM?` (Windows) veya `/dev/ttyUSB?` (Linux/Mac) seçin.
+4. **Sketch → Upload** (veya `Ctrl+U`) tıklayın.
+5. Upload tamamlandıktan sonra **Tools → Serial Monitor** açın, baud rate `115200` seçin.
+
+Başarılı yükleme sonrası Serial Monitor'de şunu görmelisiniz:
+
+```
+[Boot] pc-switch başlıyor...
+[Config] config.json yok
+[WiFi] AP modu: SSID=pcswitch-setup  IP=192.168.4.1
+[WiFi] Tarayıcıda http://192.168.4.1/config adresini aç
+[HTTP] Sunucu başladı (port 80)
+[Boot] KURULUM MODU — http://192.168.4.1/config
+```
+
+---
+
+## 5. İlk Kurulum (Web Arayüzü)
+
+İlk açılışta cihaz `pcswitch-setup` adlı bir WiFi ağı oluşturur.
+
+### Adımlar
+
+1. **Telefon veya bilgisayardan** `pcswitch-setup` WiFi ağına bağlanın (şifre yok).
+2. Tarayıcıda **http://192.168.4.1/config** adresini açın.
+3. Formu doldurun:
+
+| Alan | Açıklama |
+|---|---|
+| Ağ Adı (SSID) | Evinizin WiFi adı |
+| WiFi Şifre | Evinizin WiFi şifresi |
+| MQTT Broker | HiveMQ Cloud adresiniz (bkz. Bölüm 6) |
+| MQTT Port | `8883` (TLS — değiştirmeyin) |
+| MQTT Kullanıcı Adı | HiveMQ'da oluşturduğunuz kullanıcı |
+| MQTT Şifre | HiveMQ kullanıcı şifresi |
+| Client ID | `pcswitch-01` (olduğu gibi bırakabilirsiniz) |
+| HTTP API Anahtarı | Kendinizin belirlediği uzun bir şifre |
+| mDNS Hostname | `pcswitch` (olduğu gibi bırakabilirsiniz) |
+| OTA Şifresi | Kablosuz güncelleme şifresi |
+
+4. **Kaydet & Yeniden Başlat** butonuna tıklayın.
+5. Cihaz yeniden başlar ve evinizin WiFi'sine bağlanır.
+
+Serial Monitor'de şunu görmelisiniz:
+
+```
+[WiFi] Bağlandı: 192.168.1.45
+[mDNS] pcswitch.local
+[MQTT] Bağlandı
+[Boot] Hazır — http://192.168.1.45/  veya  http://pcswitch.local/
+```
+
+---
+
+## 6. HiveMQ Cloud Broker Kurulumu
+
+MQTT broker, cihazla internet üzerinden iletişimi sağlar. HiveMQ Cloud ücretsiz tier yeterlidir.
+
+1. **https://www.hivemq.com/mqtt-cloud-broker/** adresine gidin.
+2. **"Start Free"** butonuna tıklayın, hesap oluşturun.
+3. Cluster oluşturulduktan sonra **"Manage Cluster"** sayfasını açın.
+4. Broker adresinizi kopyalayın: `xxxxxxxx.s2.eu.hivemq.cloud`
+5. Sol menüden **"Access Management"** → **"Add New Credentials"**
+6. Kullanıcı adı: `pcswitch`, şifre belirleyin.
+7. Bu bilgileri web arayüzündeki MQTT alanlarına girin.
+
+---
+
+## 7. Kullanım
+
+### 7.1 Python İstemcisi (Önerilen)
+
+```bash
+# Kütüphaneleri kur (bir kez)
+pip install paho-mqtt requests
+```
+
+Tekrar tekrar yazmamak için ortam değişkenleri tanımlayın:
+
+```bash
+# Windows PowerShell
+$env:PC_SWITCH_MQTT_BROKER = "xxxxxxxx.s2.eu.hivemq.cloud"
+$env:PC_SWITCH_MQTT_USER   = "pcswitch"
+$env:PC_SWITCH_MQTT_PASS   = "mqtt-sifreniz"
+$env:PC_SWITCH_API_KEY     = "api-anahtariniz"
+```
+
+```bash
+# Kullanım
+python client.py power          # Güç düğmesine bas (PC açar/kapar)
+python client.py reset          # Reset düğmesine bas
+python client.py status         # Cihaz durumunu göster
+python client.py online         # Cihaz çevrimiçi mi?
+python client.py online --watch # Anlık izleme (Ctrl+C ile çık)
+```
+
+#### Örnek çıktılar
+
+```
+> python client.py status
+  Durum     : Çevrimiçi
+  Röle      : Kapalı
+  Uptime    : 3600s (1s 0dk 0sn)
+  WiFi RSSI : -58 dBm
+  IP        : 192.168.1.45
+  Serbest heap : 32456 byte
+
+> python client.py online
+[Durum] Cihaz: CEVRIMICI
+
+> python client.py power
+[OK] 'power' komutu gönderildi
+```
+
+### 7.2 Yerel Ağdan HTTP API (curl)
+
+LAN'dayken doğrudan HTTP ile de kontrol edebilirsiniz:
+
+```bash
+# Durum sorgula
+curl http://pcswitch.local/status -H "X-API-Key: api-anahtariniz"
+
+# Güç düğmesi
+curl -X POST http://pcswitch.local/power -H "X-API-Key: api-anahtariniz"
+
+# Reset düğmesi
+curl -X POST http://pcswitch.local/reset -H "X-API-Key: api-anahtariniz"
+```
+
+#### API Yanıt Örnekleri
+
+**GET /status**
+```json
+{
+  "online": true,
+  "relay_active": false,
+  "uptime_ms": 3600000,
+  "rssi": -58,
+  "ip": "192.168.1.45",
+  "heap": 32456
+}
+```
+
+**POST /power**
+```json
+{
+  "status": "ok",
+  "action": "power",
+  "pulse_ms": 500
+}
+```
+
+#### HTTP Durum Kodları
+
+| Kod | Anlam |
+|---|---|
+| 200 | Başarılı |
+| 401 | API anahtarı yanlış |
+| 409 | Röle şu an meşgul (önceki komut bitmedi) |
+| 503 | Cihaz henüz yapılandırılmamış |
+
+### 7.3 Online Durum İzleme
+
+Cihaz iki mekanizma ile online durumunu bildirir:
+
+| Mekanizma | Topic | Açıklama |
+|---|---|---|
+| **LWT** | `pcswitch/lwt` | Bağlantı koparsa broker otomatik `{"online":false}` yayınlar |
+| **Heartbeat** | `pcswitch/heartbeat` | Her 30 saniyede `{"online":true}` gönderilir |
+
+```bash
+# Tek seferlik kontrol
+python client.py online
+
+# Sürekli izleme (60s heartbeat gelmezse uyarı verir)
+python client.py online --watch
+```
+
+---
+
+## 8. Webhook Sunucusu (Website & Uygulama Entegrasyonu)
+
+Webhook sunucusu; website, mobil uygulama veya MQTT bilmeyen her servisin cihazı
+**HTTP üzerinden** kontrol etmesini sağlar. İnternet üzerinde çalışan bir sunucuya kurulur,
+gelen HTTP isteklerini MQTT'ye çevirir.
+
+```
+Website / Uygulama / Home Assistant
+         │  HTTP POST /api/power
+         ▼
+   [webhook.py]  ← internetteki bir sunucuda
+         │  MQTT publish
+         ▼
+   [HiveMQ Cloud]
+         │
+         ▼
+   [NodeMCU] → Röle → PC
+```
+
+### 8.1 Kurulum
+
+```bash
+cd webhook
+pip install -r requirements.txt
+cp .env.example .env       # .env dosyasını düzenleyin
+```
+
+`.env` dosyasını doldurun:
+
+```
+MQTT_BROKER=xxxxxxxx.s2.eu.hivemq.cloud
+MQTT_USER=pcswitch
+MQTT_PASS=mqtt-sifreniz
+WEBHOOK_API_KEY=webhook-icin-ayri-uzun-sifre
+ALLOWED_ORIGINS=https://siteniz.com    # * = herkese açık
+```
+
+### 8.2 Çalıştırma
+
+```bash
+uvicorn webhook:app --host 0.0.0.0 --port 8000
+```
+
+Swagger arayüzü otomatik gelir: `http://sunucu:8000/docs`
+
+### 8.3 Ücretsiz Deploy Seçenekleri
+
+| Platform | Ücretsiz Plan | Notlar |
+|---|---|---|
+| [Railway](https://railway.app) | 500 saat/ay | En kolay, GitHub'dan deploy |
+| [Render](https://render.com) | Sınırlı | 15dk hareketsizlikte uyur |
+| [Fly.io](https://fly.io) | 3 VM | Daha teknik |
+
+Her platformda `.env` değişkenlerini platform panelinden girebilirsiniz.
+
+### 8.4 Endpointler
+
+| Method | Endpoint | Açıklama |
+|---|---|---|
+| `GET` | `/health` | Sunucu sağlık kontrolü (auth gerekmez) |
+| `POST` | `/api/power` | Güç düğmesi |
+| `POST` | `/api/reset` | Reset düğmesi |
+| `GET` | `/api/status` | Cihaz durumu (maks 8s bekler) |
+
+Tüm `/api/*` endpointleri `X-API-Key` header'ı gerektirir.
+
+### 8.5 curl ile Test
+
+```bash
+# Sağlık kontrolü
+curl https://sunucunuz.com/health
+
+# Güç düğmesi
+curl -X POST https://sunucunuz.com/api/power \
+  -H "X-API-Key: webhook-sifreniz"
+
+# Durum
+curl https://sunucunuz.com/api/status \
+  -H "X-API-Key: webhook-sifreniz"
+```
+
+### 8.6 Website'ye Ekleme
+
+`webhook/website_example.html` dosyasını referans alın. İki satırı değiştirin:
+
+```js
+const WEBHOOK_URL = "https://sunucunuz.com";
+const API_KEY     = "webhook-sifreniz";
+```
+
+> ⚠️ **Güvenlik:** API anahtarını doğrudan frontend JavaScript koduna yazmak
+> anahtarı herkese görünür kılar. Üretim sitelerinde bir backend proxy kullanın:
+> tarayıcı kendi sunucunuza istek atar, sunucunuz webhook'a iletir.
+
+---
+
+## 9. Home Assistant Entegrasyonu
+
+Home Assistant, cihaza **doğrudan MQTT** üzerinden bağlanır — webhook sunucusuna gerek yoktur.
+
+### 9.1 MQTT Broker Ekleme
+
+1. **Ayarlar → Cihazlar & Hizmetler → Entegrasyon Ekle → MQTT**
+2. Broker: `xxxxxxxx.s2.eu.hivemq.cloud`
+3. Port: `8883`
+4. TLS: **Açık**
+5. Kullanıcı adı ve şifre: HiveMQ bilgileriniz
+
+### 9.2 Entity'leri Ekleme
+
+`home_assistant/configuration.yaml` içeriğini kendi HA `configuration.yaml`'ınıza yapıştırın,
+ardından **Geliştirici Araçları → YAML → Tümünü Yenile** yapın.
+
+HA'da otomatik oluşan entity'ler:
+
+| Entity | Tür | Açıklama |
+|---|---|---|
+| `button.pc_guc` | Buton | Güç düğmesine basar |
+| `button.pc_reset` | Buton | Reset düğmesine basar |
+| `binary_sensor.pc_switch_baglanti` | Binary Sensör | online / offline |
+| `sensor.pc_switch_wifi_sinyal` | Sensör | WiFi RSSI (dBm) |
+| `sensor.pc_switch_uptime` | Sensör | Çalışma süresi (saat) |
+
+### 9.3 Dashboard'a Ekleme
+
+HA Lovelace dashboard'una eklemek için YAML:
+
+```yaml
+type: entities
+title: PC Switch
+entities:
+  - entity: binary_sensor.pc_switch_baglanti
+    name: Bağlantı
+  - entity: button.pc_guc
+    name: Güç
+  - entity: button.pc_reset
+    name: Reset
+  - entity: sensor.pc_switch_wifi_sinyal
+    name: WiFi
+```
+
+### 9.4 Örnek Otomasyonlar
+
+`home_assistant/automations.yaml` dosyasında hazır örnekler bulunmaktadır:
+
+- **Cihaz çevrimdışı olduğunda bildirim gönder**
+- **Belirli saatte PC'yi otomatik aç**
+
+---
+
+## 10. Ayarları Değiştirme
+
+Kurulum tamamlandıktan sonra ayarları web arayüzünden değiştirebilirsiniz:
+
+1. Tarayıcıda **http://pcswitch.local/config** adresini açın.
+2. Kullanıcı adı: `admin` — Şifre: API anahtarınız
+3. İstediğiniz alanı değiştirin.
+   - Şifre alanlarını boş bırakırsanız mevcut şifre korunur.
+4. **Kaydet & Yeniden Başlat** → Cihaz yeni ayarlarla başlar.
+
+> IP adresiyle de erişebilirsiniz: `http://192.168.1.45/config`
+
+---
+
+## 11. Fabrika Sıfırlama
+
+Üç farklı yöntemle sıfırlayabilirsiniz:
+
+### Yöntem 1 — Web Arayüzü
+
+`http://pcswitch.local/config` → sayfanın altındaki **"Fabrika Sıfırla"** butonu → onayla.
+
+### Yöntem 2 — HTTP API
+
+```bash
+curl -X POST http://pcswitch.local/config/reset \
+  -u "admin:api-anahtariniz"
+```
+
+### Yöntem 3 — Fiziksel Buton (Ağa Erişim Yoksa)
+
+NodeMCU üzerindeki **FLASH** yazılı butona **5 saniye** basılı tutun:
+
+```
+Basılı tutulurken:
+  0s ──────────────────── 5s
+  LED yavaş yanıp söner → giderek hızlanır → sürekli yanar → SIFIRLAMA
+```
+
+Sıfırlama sonrası cihaz `pcswitch-setup` AP moduna geçer, Bölüm 5'ten yeniden kurulum yapabilirsiniz.
+
+---
+
+## 12. Sorun Giderme
+
+### Cihaz WiFi'ye bağlanamıyor
+
+**Belirti:** Serial Monitor'de `Bağlanamadı — AP moduna geçiliyor` mesajı.
+
+1. `pcswitch-setup` ağına bağlanıp `http://192.168.4.1/config` adresini açın.
+2. SSID ve şifreyi kontrol edin (büyük/küçük harf duyarlıdır).
+3. 2.4 GHz ağ olduğunu doğrulayın (ESP8266 5 GHz desteklemez).
+
+---
+
+### MQTT bağlantısı kurulamıyor
+
+**Belirti:** `[MQTT] Başarısız rc=-2` veya `rc=5`
+
+| Hata Kodu | Anlam | Çözüm |
+|---|---|---|
+| rc=-2 | Broker'a ulaşılamıyor | Broker adresini kontrol edin |
+| rc=4 | Kullanıcı adı/şifre yanlış | HiveMQ'dan kontrol edin |
+| rc=5 | Yetkilendirme reddedildi | HiveMQ Access Management'tan izin verin |
+
+---
+
+### Röle tıklamıyor
+
+1. Serial Monitor'de `[RELAY] Activated for 500 ms` mesajı var mı?
+   - **Varsa:** Bağlantı sorunu — GND veya IN kablosunu kontrol edin.
+   - **Yoksa:** Komut cihaza ulaşmıyor — MQTT/HTTP bağlantısını kontrol edin.
+2. VCC kablosunu **3V3**'ten **Vin** pinine taşıyın.
+3. Röle modülündeki LED'in yanıp yanmadığını kontrol edin.
+
+---
+
+### `pcswitch.local` tarayıcıda açılmıyor
+
+Windows'ta mDNS bazen sorunlu olabilir. IP adresiyle deneyin:
+
+```bash
+# IP adresini öğrenmek için
+python client.py status --http --host 192.168.1.1  # router'dan bakın
+```
+
+veya Serial Monitor'deki `[Boot] Hazır — http://192.168.1.XX/` satırındaki IP'yi kullanın.
+
+---
+
+### OTA güncelleme çalışmıyor
+
+1. Arduino IDE'de **Tools → Port** menüsünü açın.
+2. `pcswitch-ota` adlı ağ portu görünüyor mu?
+   - **Görünmüyorsa:** Cihaz ve bilgisayar aynı ağda olmalı.
+3. OTA şifresini `config.h`'deki varsayılandan değiştirdiyseniz IDE soracaktır.
+
+---
+
+### Cihaz bootloop'a girdi (sürekli yeniden başlıyor)
+
+1. FLASH butonuna basılı tutarken USB'yi bağlayın → flash moduna girer.
+2. Arduino IDE'den kodu yeniden yükleyin.
+3. Sorun devam ederse **Tools → Erase Flash → "All Flash Contents"** seçip yeniden yükleyin (ayarlar silinir).
+
+---
+
+## Teknik Referans
+
+### Pin Tablosu
+
+| Pin | Kullanım | Notlar |
+|---|---|---|
+| D1 (GPIO5) | Röle IN | Boot'ta HIGH — güvenli |
+| D3 (GPIO0) | Reset butonu | NodeMCU FLASH butonu |
+| LED_BUILTIN | Durum LED'i | Active LOW |
+
+### MQTT Topic'leri
+
+| Topic | Yön | İçerik |
+|---|---|---|
+| `pcswitch/command` | Cihaz dinler | `{"action":"power"}` / `{"action":"reset"}` / `{"action":"status"}` |
+| `pcswitch/state` | Cihaz yayınlar | Durum JSON'u |
+| `pcswitch/heartbeat` | Cihaz yayınlar (30s) | `{"online":true,"uptime_ms":...,"rssi":...}` |
+| `pcswitch/lwt` | Broker yayınlar | `{"online":false}` — bağlantı koparsa |
+
+### Varsayılan Değerler
+
+| Parametre | Varsayılan |
+|---|---|
+| Güç basış süresi | 500 ms |
+| Reset basış süresi | 200 ms |
+| Heartbeat aralığı | 30 saniye |
+| WiFi bağlanma zaman aşımı | 15 saniye |
+| Reset buton basış süresi | 5 saniye |
+| mDNS hostname | `pcswitch.local` |
+| HTTP port | 80 |
+| MQTT port | 8883 (TLS) |

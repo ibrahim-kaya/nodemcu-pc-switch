@@ -1,0 +1,36 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# pc-switch — Home Assistant Örnek Otomasyonlar
+# ─────────────────────────────────────────────────────────────────────────────
+# Bu dosyayı HA'nın automations.yaml'ına ekleyin veya
+# Ayarlar → Otomasyonlar üzerinden manuel oluşturun.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Bağlantı koptuğunda bildirim gönder
+- id: pc_switch_offline_notify
+  alias: "PC Switch Çevrimdışı Olunca Bildir"
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.pc_switch_baglanti
+      to: "off"
+      for:
+        seconds: 30
+  action:
+    - service: notify.mobile_app     # kendi notify servisinizle değiştirin
+      data:
+        title: "⚠️ pc-switch"
+        message: "Cihaz çevrimdışı oldu!"
+
+# Sabah bilgisayarı otomatik aç (örnek)
+- id: pc_switch_morning_boot
+  alias: "Sabah PC'yi Aç"
+  trigger:
+    - platform: time
+      at: "08:30:00"
+  condition:
+    - condition: state
+      entity_id: binary_sensor.pc_switch_baglanti
+      state: "on"              # cihaz çevrimiçiyse
+  action:
+    - service: button.press
+      target:
+        entity_id: button.pc_guc

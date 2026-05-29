@@ -1,0 +1,84 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# pc-switch — Home Assistant MQTT Entegrasyonu
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Kurulum:
+#   1. HA arayüzünden MQTT broker'ı ekleyin:
+#      Ayarlar → Cihazlar & Hizmetler → Entegrasyon Ekle → MQTT
+#      Broker: xxxxxxxx.s2.eu.hivemq.cloud
+#      Port:   8883
+#      TLS:    Açık
+#      Kullanıcı / Şifre: HiveMQ bilgileriniz
+#
+#   2. Bu dosyadaki içeriği kendi configuration.yaml'ınıza yapıştırın.
+#
+#   3. HA'yı yeniden başlatın veya "Yapılandırmayı Yenile" yapın.
+# ─────────────────────────────────────────────────────────────────────────────
+
+mqtt:
+
+  # ── Butonlar ──────────────────────────────────────────────────────────────
+  button:
+
+    - unique_id: pc_switch_power
+      name: "PC Güç"
+      icon: mdi:power
+      command_topic: "pcswitch/command"
+      payload_press: '{"action":"power"}'
+      qos: 1
+      device:
+        identifiers: ["pcswitch_01"]
+        name: "PC Switch"
+        model: "NodeMCU V3 ESP8266"
+        manufacturer: "ESP8266 Community"
+
+    - unique_id: pc_switch_reset
+      name: "PC Reset"
+      icon: mdi:restart
+      command_topic: "pcswitch/command"
+      payload_press: '{"action":"reset"}'
+      qos: 1
+      device:
+        identifiers: ["pcswitch_01"]
+        name: "PC Switch"
+
+  # ── Bağlantı durumu (LWT) ─────────────────────────────────────────────────
+  binary_sensor:
+
+    - unique_id: pc_switch_online
+      name: "PC Switch Bağlantı"
+      icon: mdi:lan-connect
+      state_topic: "pcswitch/lwt"
+      value_template: "{{ 'ON' if value_json.online else 'OFF' }}"
+      payload_on: "ON"
+      payload_off: "OFF"
+      device_class: connectivity
+      device:
+        identifiers: ["pcswitch_01"]
+        name: "PC Switch"
+
+  # ── Sensörler (heartbeat) ─────────────────────────────────────────────────
+  sensor:
+
+    - unique_id: pc_switch_rssi
+      name: "PC Switch WiFi Sinyal"
+      icon: mdi:wifi
+      state_topic: "pcswitch/heartbeat"
+      value_template: "{{ value_json.rssi }}"
+      unit_of_measurement: "dBm"
+      device_class: signal_strength
+      expire_after: 90       # 90s heartbeat gelmezse "unavailable" olur
+      device:
+        identifiers: ["pcswitch_01"]
+        name: "PC Switch"
+
+    - unique_id: pc_switch_uptime
+      name: "PC Switch Uptime"
+      icon: mdi:timer-outline
+      state_topic: "pcswitch/heartbeat"
+      value_template: "{{ (value_json.uptime_ms / 1000 / 3600) | round(1) }}"
+      unit_of_measurement: "saat"
+      expire_after: 90
+      device:
+        identifiers: ["pcswitch_01"]
+        name: "PC Switch"
