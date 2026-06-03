@@ -14,6 +14,10 @@
 #define WIFI_TIMEOUT_MS       15000
 #define WIFI_CHECK_MS         10000
 #define MQTT_RECONNECT_MS     5000
+// PubSubClient.h kendi MQTT_KEEPALIVE'ını (15) tanımlar; çakışmayı önlemek için sıfırla
+#ifdef MQTT_KEEPALIVE
+  #undef MQTT_KEEPALIVE
+#endif
 #define MQTT_KEEPALIVE        60
 
 // ─── Kurulum AP'i (ilk açılış / WiFi bağlanamadıysa) ─────────────────────────
