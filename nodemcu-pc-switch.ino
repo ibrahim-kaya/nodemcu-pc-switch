@@ -686,7 +686,7 @@ static void checkForUpdates() {
     relayActive = false;
 
     ESPhttpUpdate.setLedPin(LED_BUILTIN, LOW);
-    ESPhttpUpdate.setFollowRedirects(true);
+    ESPhttpUpdate.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     ESPhttpUpdate.onProgress(otaUpdateProgress);
 
     t_httpUpdate_return r = ESPhttpUpdate.update(client, OTA_FIRMWARE_URL);
