@@ -26,6 +26,8 @@
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 #include <ArduinoOTA.h>
+#include <ESP8266HTTPClient.h>
+#include <ESP8266httpUpdate.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <LittleFS.h>
@@ -237,6 +239,7 @@ static String buildStateJson() {
     StaticJsonDocument<256> doc;
     doc["online"]       = true;
     doc["relay_active"] = relayActive;
+    doc["fw_version"]   = FIRMWARE_VERSION;
     doc["uptime_ms"]    = millis();
     doc["rssi"]         = WiFi.RSSI();
     doc["ip"]           = WiFi.localIP().toString();
@@ -587,6 +590,128 @@ static void setupOTA() {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// OTOMATİK GÜNCELLEME (GitHub Releases — açılışta kontrol)
+// ═════════════════════════════════════════════════════════════════════════════
+
+// "1.2.3" → major*1e6 + minor*1e3 + patch  (basit semver karşılaştırması)
+static unsigned long versionToNum(const char* v) {
+    int a = 0, b = 0, c = 0;
+    sscanf(v, "%d.%d.%d", &a, &b, &c);
+    return (unsigned long)a * 1000000UL + (unsigned long)b * 1000UL + (unsigned long)c;
+}
+
+static bool isNewerVersion(const char* remote, const char* local) {
+    return versionToNum(remote) > versionToNum(local);
+}
+
+// onProgress: indirme ilerledikçe LED'i yanıp söndür + LCD'de yüzde göster
+static void otaUpdateProgress(int done, int total) {
+    if (total <= 0) return;
+    int pct = (done * 100) / total;
+    static int last = -1;
+    if (pct == last) return;
+    digitalWrite(LED_BUILTIN, (pct / 5) % 2 == 0 ? LOW : HIGH);
+    if (pct / 10 != last / 10) {
+        Serial.printf("[Update] İndiriliyor %%%d\n", pct);
+#ifdef LCD_ENABLED
+        char buf[8];
+        snprintf(buf, sizeof(buf), "%%%d", pct);
+        lcdBootMsg("Guncelleniyor", buf);
+#endif
+    }
+    last = pct;
+}
+
+static void checkForUpdates() {
+    if (!OTA_UPDATE_ENABLED) return;
+
+    Serial.println("[Update] Güncelleme kontrol ediliyor...");
+    Serial.printf("[Update] Mevcut sürüm: %s\n", FIRMWARE_VERSION);
+#ifdef LCD_ENABLED
+    lcdBootMsg("Guncelleme", "kontrol ediliyor");
+#endif
+
+    // version.json indir
+    WiFiClientSecure client;
+    client.setInsecure();   // sertifika doğrulaması yok (ilk sürüm)
+
+    HTTPClient http;
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);  // GitHub 302 → S3
+    http.setTimeout(10000);
+    if (!http.begin(client, OTA_VERSION_URL)) {
+        Serial.println("[Update] version.json bağlantısı kurulamadı — atlanıyor");
+        return;
+    }
+
+    int code = http.GET();
+    if (code != HTTP_CODE_OK) {
+        Serial.printf("[Update] version.json alınamadı (HTTP %d) — atlanıyor\n", code);
+        http.end();
+        return;
+    }
+
+    String body = http.getString();
+    http.end();
+
+    StaticJsonDocument<128> doc;
+    if (deserializeJson(doc, body) != DeserializationError::Ok) {
+        Serial.println("[Update] version.json parse hatası — atlanıyor");
+        return;
+    }
+
+    const char* remote = doc["version"] | "";
+    if (strlen(remote) == 0) {
+        Serial.println("[Update] version alanı boş — atlanıyor");
+        return;
+    }
+
+    Serial.printf("[Update] Sunucu sürümü: %s\n", remote);
+    if (!isNewerVersion(remote, FIRMWARE_VERSION)) {
+        Serial.println("[Update] Firmware güncel — güncelleme yok");
+#ifdef LCD_ENABLED
+        lcdBootMsg("Firmware guncel", FIRMWARE_VERSION);
+        delay(800);
+#endif
+        return;
+    }
+
+    Serial.printf("[Update] Yeni sürüm bulundu (%s) → indiriliyor...\n", remote);
+#ifdef LCD_ENABLED
+    lcdBootMsg("Yeni surum!", remote);
+    delay(800);
+#endif
+
+    // Röleyi güvenli duruma al (flash sırasında tetiklenmesin)
+    relayWrite(false);
+    relayActive = false;
+
+    ESPhttpUpdate.setLedPin(LED_BUILTIN, LOW);
+    ESPhttpUpdate.setFollowRedirects(true);
+    ESPhttpUpdate.onProgress(otaUpdateProgress);
+
+    t_httpUpdate_return r = ESPhttpUpdate.update(client, OTA_FIRMWARE_URL);
+    // Başarılı olursa çekirdek otomatik ESP.restart() yapar; buraya dönülmez.
+    switch (r) {
+        case HTTP_UPDATE_FAILED:
+            Serial.printf("[Update] BAŞARISIZ (%d): %s\n",
+                ESPhttpUpdate.getLastError(),
+                ESPhttpUpdate.getLastErrorString().c_str());
+            digitalWrite(LED_BUILTIN, HIGH);  // LED kapat
+#ifdef LCD_ENABLED
+            lcdBootMsg("Guncelleme", "BASARISIZ");
+            delay(1500);
+#endif
+            break;
+        case HTTP_UPDATE_NO_UPDATES:
+            Serial.println("[Update] Güncelleme yok (sunucu reddetti)");
+            break;
+        case HTTP_UPDATE_OK:
+            Serial.println("[Update] Tamamlandı — yeniden başlatılıyor");
+            break;
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // LCD (Nokia 5110) — sadece LCD_ENABLED tanımlıysa derlenir
 // 84x48 px, textSize=1: her karakter 6x8 px → 14 sütun / 5 satır (10px aralık)
 // ═════════════════════════════════════════════════════════════════════════════
@@ -728,6 +853,11 @@ void setup() {
 
     // Normal mod servisleri
     if (!setupMode) {
+        // Açılışta otomatik güncelleme kontrolü.
+        // Yeni sürüm varsa buradan indirilir, flashlanır ve cihaz yeniden başlar
+        // (aşağıdaki MDNS/OTA/MQTT kurulumlarına hiç ulaşılmaz).
+        checkForUpdates();
+
 #ifdef LCD_ENABLED
         lcdBootMsg("mDNS & OTA...");
 #endif

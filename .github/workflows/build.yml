@@ -1,0 +1,87 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# pc-switch — Otomatik firmware derleme & yayınlama
+# ─────────────────────────────────────────────────────────────────────────────
+# Tetikleyici: "v" ile başlayan bir tag push edildiğinde (örn. v1.1.0).
+#
+#   git tag v1.1.0
+#   git push origin v1.1.0
+#
+# Bu workflow:
+#   1. ESP8266 firmware'ini derler (sürümü tag'den alır)
+#   2. firmware.bin + version.json üretir
+#   3. Bunları GitHub Release'e asset olarak ekler
+#
+# Cihaz açılışta /releases/latest/download/version.json kontrol edip
+# yeni sürümü otomatik indirir ve flashlar.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Build & Release Firmware
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write   # release oluşturmak / asset eklemek için gerekli
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup arduino-cli
+        uses: arduino/setup-arduino-cli@v1
+
+      - name: ESP8266 core kur
+        run: |
+          arduino-cli config init --additional-urls https://arduino.esp8266.com/stable/package_esp8266com_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp8266:esp8266
+
+      - name: Kütüphaneleri kur
+        run: |
+          arduino-cli lib install "PubSubClient"
+          arduino-cli lib install "ArduinoJson"
+          # LCD opsiyonel — config.h'de LCD_ENABLED açıksa gerekli (kapalıyken zararsız)
+          arduino-cli lib install "Adafruit GFX Library"
+          arduino-cli lib install "Adafruit PCD8544 Nokia 5110 LCD library"
+
+      - name: Sürümü tag'den çıkar
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Firmware sürümünü config.h'e yaz
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          sed -i "s/#define FIRMWARE_VERSION \"[^\"]*\"/#define FIRMWARE_VERSION \"$VERSION\"/" config.h
+          echo "config.h içindeki sürüm:"
+          grep "define FIRMWARE_VERSION" config.h
+
+      - name: Derle
+        run: |
+          arduino-cli compile \
+            --fqbn esp8266:esp8266:nodemcuv2 \
+            --output-dir ./build \
+            .
+
+      - name: Asset'leri hazırla (firmware.bin + version.json)
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          # arduino-cli .ino.bin üretir → firmware.bin olarak yeniden adlandır
+          cp ./build/*.ino.bin ./firmware.bin
+          echo "{\"version\":\"$VERSION\"}" > ./version.json
+          echo "Üretilen dosyalar:"
+          ls -la firmware.bin version.json
+          cat version.json
+
+      - name: Release oluştur & asset ekle
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            firmware.bin
+            version.json
+          generate_release_notes: true

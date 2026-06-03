@@ -1,2 +1,17 @@
-# Kimlik bilgilerini asla commit etme
-config.h
+# ─── Sırlar ───────────────────────────────────────────────────────────────────
+# Gerçek kimlik bilgileri cihazın LittleFS'inde (config.json) tutulur, repoya GİRMEZ.
+# config.h artık yalnızca donanım sabitleri + GitHub repo bilgisi içerir → commit edilir.
+# (GitHub Actions firmware'i derleyebilmek için config.h'e ihtiyaç duyar.)
+
+# Webhook ortam değişkenleri (MQTT şifresi, API anahtarı vb.)
+webhook/.env
+
+# Derleme çıktıları
+build/
+*.bin
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/

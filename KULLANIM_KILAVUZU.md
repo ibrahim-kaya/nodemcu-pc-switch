@@ -18,7 +18,8 @@ NodeMCU V3 (ESP8266) ve 5V röle kullanarak bilgisayarın güç düğmesini WiFi
 10. [Ayarları Değiştirme](#10-ayarları-değiştirme)
 11. [Fabrika Sıfırlama](#11-fabrika-sıfırlama)
 12. [Nokia 5110 LCD Ekran (Opsiyonel)](#12-nokia-5110-lcd-ekran-opsiyonel)
-13. [Sorun Giderme](#13-sorun-giderme)
+13. [Otomatik Güncelleme (OTA)](#13-otomatik-güncelleme-ota)
+14. [Sorun Giderme](#14-sorun-giderme)
 
 ---
 
@@ -604,7 +605,75 @@ Düşük değer → açık/soluk, yüksek değer → koyu/dolu. Her ekran farkl�
 
 ---
 
-## 13. Sorun Giderme
+## 13. Otomatik Güncelleme (OTA)
+
+Cihaz **her açılışta** GitHub deposundaki en son sürümü kontrol eder. Daha yeni bir firmware yayınlanmışsa otomatik olarak indirir, flashlar ve yeniden başlar — USB kablosu veya manuel müdahale gerekmez.
+
+> ℹ️ Bu, yerel ağdaki Arduino IDE OTA'sından (Tools → Port → `pcswitch-ota`) farklıdır. Bu sistem internet üzerinden, otomatik ve "pull" mantığıyla çalışır.
+
+### Nasıl çalışır?
+
+```
+[Açılış] → WiFi bağlandı → version.json kontrol et
+   │
+   ├─ Sunucu sürümü > cihaz sürümü?
+   │     ├─ HAYIR → "Firmware güncel" → normal çalış
+   │     └─ EVET  → firmware.bin indir → flashla → yeniden başla
+   │
+   └─ İnternet yok / dosya yok → sessizce geç, normal çalış
+```
+
+Cihaz, GitHub'ın `…/releases/latest/download/version.json` kalıcı linkindeki minik dosyayı (`{"version":"1.1.0"}`) okur, kendi sürümüyle (semver) karşılaştırır. LCD takılıysa süreç ekranda da gösterilir ("Guncelleme kontrol ediliyor", "Yeni surum!", "%50" gibi).
+
+### Tek seferlik kurulum
+
+1. Proje zaten **public** `ibrahim-kaya/nodemcu-pc-switch` deposunda.
+   > Repo public olmalı: özel repo'da indirme linki kimlik doğrulama ister.
+2. `config.h` içindeki depo bilgileri doğru olmalı:
+   ```cpp
+   #define GITHUB_OWNER  "ibrahim-kaya"
+   #define GITHUB_REPO   "nodemcu-pc-switch"
+   ```
+3. Bu haliyle bir kez cihaza flashlayın (bundan sonrası otomatik).
+
+### Yeni sürüm yayınlama
+
+Kodu değiştirip yeni bir sürüm yayınlamak için sadece bir tag push'lamanız yeterli:
+
+```bash
+git add -A && git commit -m "Yeni özellik"
+git tag v1.1.0
+git push origin v1.1.0
+```
+
+Ardından `.github/workflows/build.yml` GitHub Actions iş akışı otomatik olarak:
+1. Firmware'i derler (sürümü tag'den, `v1.1.0` → `1.1.0`, alır),
+2. `firmware.bin` + `version.json` üretir,
+3. Bunları GitHub Release'e asset olarak ekler.
+
+Cihaz bir sonraki açılışında (elektrik kesintisi / `pcswitch.local/config` üzerinden yeniden başlatma / fişi çekip takma) yeni sürümü görüp kendini günceller.
+
+> 💡 **Sürüm numarası:** Daima `v` öneki + [semver](https://semver.org) kullanın (`v1.0.1`, `v1.2.0`, `v2.0.0`). Cihaz sadece **daha büyük** sürüm numarasına günceller.
+
+### Çalışan sürümü öğrenme
+
+`/status` yanıtında `fw_version` alanı bulunur:
+
+```bash
+curl http://pcswitch.local/status -H "X-API-Key: ANAHTARINIZ"
+# {"online":true,"relay_active":false,"fw_version":"1.1.0", ...}
+```
+
+### Güncellemeyi kapatma
+
+İstemezseniz `config.h` içinde:
+```cpp
+#define OTA_UPDATE_ENABLED   false
+```
+
+---
+
+## 14. Sorun Giderme
 
 ### Cihaz WiFi'ye bağlanamıyor
 
@@ -651,12 +720,30 @@ veya Serial Monitor'deki `[Boot] Hazır — http://192.168.1.XX/` satırındaki 
 
 ---
 
-### OTA güncelleme çalışmıyor
+### Yerel OTA (Arduino IDE) çalışmıyor
 
 1. Arduino IDE'de **Tools → Port** menüsünü açın.
 2. `pcswitch-ota` adlı ağ portu görünüyor mu?
    - **Görünmüyorsa:** Cihaz ve bilgisayar aynı ağda olmalı.
 3. OTA şifresini `config.h`'deki varsayılandan değiştirdiyseniz IDE soracaktır.
+
+---
+
+### Otomatik güncelleme (GitHub) çalışmıyor
+
+Serial Monitor'de açılışta görünen `[Update]` loglarına bakın:
+
+| Log | Anlam | Çözüm |
+|---|---|---|
+| `version.json alınamadı (HTTP 404)` | Release veya asset yok | Tag push ettiniz mi? Actions yeşil mi? Release'de `version.json` var mı? |
+| `version.json bağlantısı kurulamadı` | İnternet/DNS sorunu | WiFi'nin internet erişimi olduğunu doğrulayın |
+| `Firmware güncel` | Sunucu sürümü ≤ cihaz sürümü | Daha büyük bir sürüm tag'leyin (`v1.0.1`) |
+| `BAŞARISIZ` | İndirme/flash hatası | Flash boyutu yeterli mi? (`4MB FS:2MB, OTA:~1019kB`) |
+
+Diğer kontroller:
+- `config.h`'deki `GITHUB_OWNER` ve `GITHUB_REPO` doğru mu?
+- Repo **public** mi? (Private repo doğrudan indirmeye izin vermez.)
+- `git push origin v1.1.0` ile tag'i gerçekten push ettiniz mi?
 
 ---
 
