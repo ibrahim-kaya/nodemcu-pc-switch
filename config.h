@@ -45,9 +45,9 @@
 #define MQTT_TOPIC_LWT        "pcswitch/lwt"
 
 // ─── Nokia 5110 LCD (PCD8544) — OPSİYONEL ─────────────────────────────────────
-// LCD takılıysa aşağıdaki satırın başındaki "//" işaretini KALDIRIN.
+// LCD takılı değil ise aşağıdaki "#define LCD_ENABLED" satırının başına "//" işareti EKLEYİN.
 // LCD takılı değilken aktif bırakmayın (garip davranışlara yol açar).
-// #define LCD_ENABLED
+#define LCD_ENABLED
 
 #define LCD_CLK       D5     // GPIO14 — CLK (5)
 #define LCD_DIN       D7     // GPIO13 — DIN (4)
