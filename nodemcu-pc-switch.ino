@@ -322,6 +322,13 @@ static void maintainMQTT() {
 // WiFi
 // ═════════════════════════════════════════════════════════════════════════════
 
+static bool hasWifiCredentials() {
+    return configLoaded && strlen(cfg.wifi_ssid) > 0;
+}
+
+static void startNormalServices();
+static void recoverFromSetupMode();
+
 static void startSetupAP() {
     WiFi.mode(WIFI_AP);
     WiFi.softAP(SETUP_AP_SSID);
@@ -333,8 +340,21 @@ static void startSetupAP() {
 #endif
 }
 
+static void startSetupAPWithRetry() {
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.softAP(SETUP_AP_SSID);
+    WiFi.begin(cfg.wifi_ssid, cfg.wifi_password);
+    setupMode = true;
+    lastWifiCheckMs = millis();
+    Serial.printf("[WiFi] Kurtarma modu: AP=%s + STA yeniden deneme\n", SETUP_AP_SSID);
+    Serial.println("[WiFi] Tarayıcıda http://192.168.4.1/config adresini aç");
+#ifdef LCD_ENABLED
+    lcdBootMsg("AP + yeniden baglan", "192.168.4.1");
+#endif
+}
+
 static void connectWiFi() {
-    if (!configLoaded || strlen(cfg.wifi_ssid) == 0) { startSetupAP(); return; }
+    if (!hasWifiCredentials()) { startSetupAP(); return; }
 
     WiFi.mode(WIFI_STA);
     WiFi.begin(cfg.wifi_ssid, cfg.wifi_password);
@@ -355,13 +375,39 @@ static void connectWiFi() {
         lcdBootMsg("WiFi baglandi", WiFi.localIP().toString().c_str());
 #endif
     } else {
-        Serial.println("\n[WiFi] Bağlanamadı — AP moduna geçiliyor");
-        startSetupAP();
+        Serial.println("\n[WiFi] Bağlanamadı — kurtarma moduna geçiliyor");
+        if (hasWifiCredentials()) startSetupAPWithRetry();
+        else startSetupAP();
     }
 }
 
+static void recoverFromSetupMode() {
+    setupMode = false;
+    WiFi.mode(WIFI_STA);
+    WiFi.softAPdisconnect(true);
+    Serial.printf("[WiFi] Kurtarıldı: %s\n", WiFi.localIP().toString().c_str());
+#ifdef LCD_ENABLED
+    lcdBootMsg("WiFi baglandi", WiFi.localIP().toString().c_str());
+#endif
+    startNormalServices();
+}
+
 static void maintainWiFi() {
-    if (setupMode) return;
+    if (setupMode) {
+        if (!hasWifiCredentials()) return;
+        if (millis() - lastWifiCheckMs < WIFI_CHECK_MS) return;
+        lastWifiCheckMs = millis();
+
+        if (WiFi.status() == WL_CONNECTED) {
+            recoverFromSetupMode();
+            return;
+        }
+
+        Serial.println("[WiFi] STA yeniden deneniyor...");
+        WiFi.begin(cfg.wifi_ssid, cfg.wifi_password);
+        return;
+    }
+
     if (millis() - lastWifiCheckMs < WIFI_CHECK_MS) return;
     lastWifiCheckMs = millis();
     if (WiFi.status() != WL_CONNECTED) {
@@ -589,6 +635,23 @@ static void setupOTA() {
     Serial.println("[OTA] Hazır");
 }
 
+static void startNormalServices() {
+#ifdef LCD_ENABLED
+    lcdBootMsg("mDNS & OTA...");
+#endif
+    if (MDNS.begin(cfg.mdns_hostname))
+        Serial.printf("[mDNS] %s.local\n", cfg.mdns_hostname);
+
+    setupOTA();
+
+    wifiClient.setInsecure();
+    mqttClient.setServer(cfg.mqtt_broker, cfg.mqtt_port);
+    mqttClient.setCallback(mqttCallback);
+    mqttClient.setKeepAlive(MQTT_KEEPALIVE);
+    mqttClient.setBufferSize(512);
+    mqttConnect();
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // OTOMATİK GÜNCELLEME (GitHub Releases — açılışta kontrol)
 // ═════════════════════════════════════════════════════════════════════════════
@@ -769,7 +832,10 @@ static void updateDisplay() {
     // ── Satır 1 (y=10): WiFi ────────────────────────────────────────────────
     lcd.setCursor(0, 10);
     if (setupMode) {
-        lcd.print("AP:kurulum modu");
+        if (hasWifiCredentials())
+            lcd.print("AP:yeniden baglan");
+        else
+            lcd.print("AP:kurulum modu");
     } else if (WiFi.status() == WL_CONNECTED) {
         String ssid = String(cfg.wifi_ssid);
         if (ssid.length() > 11) ssid = ssid.substring(0, 10) + "~";
@@ -857,21 +923,7 @@ void setup() {
         // Yeni sürüm varsa buradan indirilir, flashlanır ve cihaz yeniden başlar
         // (aşağıdaki MDNS/OTA/MQTT kurulumlarına hiç ulaşılmaz).
         checkForUpdates();
-
-#ifdef LCD_ENABLED
-        lcdBootMsg("mDNS & OTA...");
-#endif
-        if (MDNS.begin(cfg.mdns_hostname))
-            Serial.printf("[mDNS] %s.local\n", cfg.mdns_hostname);
-
-        setupOTA();
-
-        wifiClient.setInsecure();  // TLS şifreli ama sertifika doğrulanmaz
-        mqttClient.setServer(cfg.mqtt_broker, cfg.mqtt_port);
-        mqttClient.setCallback(mqttCallback);
-        mqttClient.setKeepAlive(MQTT_KEEPALIVE);
-        mqttClient.setBufferSize(512);
-        mqttConnect();   // → içinde LCD mesajları var
+        startNormalServices();
     }
 
     // HTTP sunucu — her modda çalışır
@@ -918,6 +970,8 @@ void loop() {
     updateDisplay();
 #endif
 
+    maintainWiFi();
+
     if (!setupMode) {
         MDNS.update();
         ArduinoOTA.handle();
@@ -926,6 +980,5 @@ void loop() {
             sendHeartbeat();
         }
         maintainMQTT();
-        maintainWiFi();
     }
 }
