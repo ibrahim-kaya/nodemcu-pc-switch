@@ -11,8 +11,8 @@
 #define HEARTBEAT_INTERVAL_MS 30000
 
 // ─── Periyodik kontrol aralıkları (ms) ───────────────────────────────────────
-#define WIFI_TIMEOUT_MS       15000
-#define WIFI_CHECK_MS         10000
+#define WIFI_TIMEOUT_MS       15000   // tek STA denemesi için bekleme süresi
+#define WIFI_CHECK_MS         10000   // başarısız denemeler arası minimum aralık
 #define MQTT_RECONNECT_MS     5000
 // PubSubClient.h kendi MQTT_KEEPALIVE'ını (15) tanımlar; çakışmayı önlemek için sıfırla
 #ifdef MQTT_KEEPALIVE

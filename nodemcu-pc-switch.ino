@@ -41,6 +41,7 @@
 Adafruit_PCD8544 lcd(LCD_CLK, LCD_DIN, LCD_DC, LCD_CE, LCD_RST);
 static unsigned long lastDisplayMs = 0;
 static bool          lcdBootPhase  = true;   // true → boot mesajları gösterilir
+static bool          setupLcdDrawn = false;  // kurulum ekranı (QR) bir kez çizildi mi
 // Forward declaration — tanım LCD bölümünde, ama WiFi/MQTT fonksiyonları önce derleniyor
 static void lcdBootMsg(const char* msg, const char* detail = nullptr);
 #endif
@@ -146,6 +147,7 @@ static unsigned long relayDurationMs = 0;
 
 // ─── Zamanlayıcı referansları ─────────────────────────────────────────────────
 static unsigned long lastWifiCheckMs  = 0;
+static unsigned long lastWifiBeginMs  = 0;   // son WiFi.begin() zamanı
 static unsigned long lastMqttCheckMs  = 0;
 static unsigned long lastHeartbeatMs  = 0;
 
@@ -330,10 +332,19 @@ static bool hasWifiCredentials() {
 static void startNormalServices();
 static void recoverFromSetupMode();
 
+static void beginStaConnection() {
+    WiFi.disconnect();
+    WiFi.begin(cfg.wifi_ssid, cfg.wifi_password);
+    lastWifiBeginMs = millis();
+}
+
 static void startSetupAP() {
     WiFi.mode(WIFI_AP);
     WiFi.softAP(SETUP_AP_SSID);
     setupMode = true;
+#ifdef LCD_ENABLED
+    setupLcdDrawn = false;
+#endif
     Serial.printf("[WiFi] AP modu: SSID=%s  IP=192.168.4.1\n", SETUP_AP_SSID);
     Serial.println("[WiFi] Tarayıcıda http://192.168.4.1/config adresini aç");
 #ifdef LCD_ENABLED
@@ -343,13 +354,18 @@ static void startSetupAP() {
 
 static void startSetupAPWithRetry() {
     WiFi.mode(WIFI_AP_STA);
+    WiFi.setAutoReconnect(true);
+    WiFi.persistent(false);
+    beginStaConnection();
     WiFi.softAP(SETUP_AP_SSID);
-    WiFi.begin(cfg.wifi_ssid, cfg.wifi_password);
     setupMode = true;
     lastWifiCheckMs = millis();
     Serial.printf("[WiFi] Kurtarma modu: AP=%s + STA yeniden deneme\n", SETUP_AP_SSID);
+    Serial.printf("[WiFi] STA denemesi: %ds bekleme, sonra en az %ds aralıkla tekrar\n",
+        WIFI_TIMEOUT_MS / 1000, WIFI_CHECK_MS / 1000);
     Serial.println("[WiFi] Tarayıcıda http://192.168.4.1/config adresini aç");
 #ifdef LCD_ENABLED
+    setupLcdDrawn = false;
     lcdBootMsg("AP + yeniden baglan", "192.168.4.1");
 #endif
 }
@@ -358,7 +374,9 @@ static void connectWiFi() {
     if (!hasWifiCredentials()) { startSetupAP(); return; }
 
     WiFi.mode(WIFI_STA);
-    WiFi.begin(cfg.wifi_ssid, cfg.wifi_password);
+    WiFi.setAutoReconnect(true);
+    WiFi.persistent(false);
+    beginStaConnection();
     Serial.printf("[WiFi] Bağlanıyor: %s", cfg.wifi_ssid);
 #ifdef LCD_ENABLED
     lcdBootMsg("WiFi baglan...", cfg.wifi_ssid);
@@ -384,6 +402,9 @@ static void connectWiFi() {
 
 static void recoverFromSetupMode() {
     setupMode = false;
+#ifdef LCD_ENABLED
+    setupLcdDrawn = false;
+#endif
     WiFi.mode(WIFI_STA);
     WiFi.softAPdisconnect(true);
     Serial.printf("[WiFi] Kurtarıldı: %s\n", WiFi.localIP().toString().c_str());
@@ -396,16 +417,21 @@ static void recoverFromSetupMode() {
 static void maintainWiFi() {
     if (setupMode) {
         if (!hasWifiCredentials()) return;
-        if (millis() - lastWifiCheckMs < WIFI_CHECK_MS) return;
-        lastWifiCheckMs = millis();
 
+        // Bağlantı kuruldu mu? — her loop turunda kontrol et
         if (WiFi.status() == WL_CONNECTED) {
             recoverFromSetupMode();
             return;
         }
 
+        // Devam eden denemeyi kesme: önce WIFI_TIMEOUT_MS kadar bekle
+        if (millis() - lastWifiBeginMs < WIFI_TIMEOUT_MS) return;
+
+        if (millis() - lastWifiCheckMs < WIFI_CHECK_MS) return;
+        lastWifiCheckMs = millis();
+
         Serial.println("[WiFi] STA yeniden deneniyor...");
-        WiFi.begin(cfg.wifi_ssid, cfg.wifi_password);
+        beginStaConnection();
         return;
     }
 
@@ -822,6 +848,9 @@ static void setupDisplay() {
 #define SETUP_QR_VERSION 2   // 25 byte URL için yeterli (ECC_LOW)
 
 static void lcdDrawSetupScreen() {
+    if (setupLcdDrawn) return;
+    setupLcdDrawn = true;
+
     lcd.clearDisplay();
     lcd.setTextSize(1);
     lcd.setTextColor(BLACK);
@@ -858,6 +887,7 @@ static void updateDisplay() {
         lcdDrawSetupScreen();
         return;
     }
+    setupLcdDrawn = false;
 
     lcd.clearDisplay();
     lcd.setTextSize(1);
