@@ -36,6 +36,7 @@
 #ifdef LCD_ENABLED
 #include <Adafruit_GFX.h>
 #include <Adafruit_PCD8544.h>
+#include "qrcode.h"
 // Software SPI: CLK, DIN, DC, CE, RST
 Adafruit_PCD8544 lcd(LCD_CLK, LCD_DIN, LCD_DC, LCD_CE, LCD_RST);
 static unsigned long lastDisplayMs = 0;
@@ -817,9 +818,46 @@ static void setupDisplay() {
     Serial.println("[LCD] Baslatildi");
 }
 
+// Kurulum modu: QR → http://192.168.4.1/config + IP metni
+#define SETUP_QR_VERSION 2   // 25 byte URL için yeterli (ECC_LOW)
+
+static void lcdDrawSetupScreen() {
+    lcd.clearDisplay();
+    lcd.setTextSize(1);
+    lcd.setTextColor(BLACK);
+
+    const char* status = hasWifiCredentials() ? "Yeniden dene" : "Kurulum";
+    lcd.setCursor(lcdCenterX(status), 0);
+    lcd.print(status);
+
+    QRCode qrcode;
+    uint8_t qrcodeData[qrcode_getBufferSize(SETUP_QR_VERSION)];
+    if (qrcode_initText(&qrcode, qrcodeData, SETUP_QR_VERSION, ECC_LOW, SETUP_PAGE_URL) == 0) {
+        const uint8_t size = qrcode.size;
+        const int16_t qrX = (84 - size) / 2;
+        const int16_t qrY = 10;
+        for (uint8_t row = 0; row < size; row++) {
+            for (uint8_t col = 0; col < size; col++) {
+                if (qrcode_getModule(&qrcode, col, row))
+                    lcd.drawPixel(qrX + col, qrY + row, BLACK);
+            }
+        }
+    }
+
+    lcd.setCursor(lcdCenterX(SETUP_AP_IP), 40);
+    lcd.print(SETUP_AP_IP);
+
+    lcd.display();
+}
+
 static void updateDisplay() {
     if (millis() - lastDisplayMs < LCD_UPDATE_MS) return;
     lastDisplayMs = millis();
+
+    if (setupMode) {
+        lcdDrawSetupScreen();
+        return;
+    }
 
     lcd.clearDisplay();
     lcd.setTextSize(1);
@@ -831,12 +869,7 @@ static void updateDisplay() {
 
     // ── Satır 1 (y=10): WiFi ────────────────────────────────────────────────
     lcd.setCursor(0, 10);
-    if (setupMode) {
-        if (hasWifiCredentials())
-            lcd.print("AP:yeniden baglan");
-        else
-            lcd.print("AP:kurulum modu");
-    } else if (WiFi.status() == WL_CONNECTED) {
+    if (WiFi.status() == WL_CONNECTED) {
         String ssid = String(cfg.wifi_ssid);
         if (ssid.length() > 11) ssid = ssid.substring(0, 10) + "~";
         lcd.print("W:");
@@ -847,27 +880,19 @@ static void updateDisplay() {
 
     // ── Satır 2 (y=20): IP ──────────────────────────────────────────────────
     lcd.setCursor(0, 20);
-    if (setupMode) {
-        lcd.print("192.168.4.1");
-    } else {
-        lcd.print(WiFi.localIP().toString());
-    }
+    lcd.print(WiFi.localIP().toString());
 
     // ── Satır 3 (y=30): MQTT ────────────────────────────────────────────────
     lcd.setCursor(0, 30);
-    if (setupMode) {
-        lcd.print("MQTT: --");
-    } else {
-        lcd.print("MQTT:");
-        lcd.print(mqttClient.connected() ? "BAGLI" : "KOPUK");
-    }
+    lcd.print("MQTT:");
+    lcd.print(mqttClient.connected() ? "BAGLI" : "KOPUK");
 
     // ── Satır 4 (y=40): Röle (sol) + RSSI (sağ) ─────────────────────────────
     // "Role:AKTIF" = 10 karakter = 60px → RSSI değeri için 24px kaldı (4 karakter)
     lcd.setCursor(0, 40);
     lcd.print("Role:");
     lcd.print(relayActive ? "AKTIF" : "Pasif");
-    if (!setupMode && WiFi.status() == WL_CONNECTED) {
+    if (WiFi.status() == WL_CONNECTED) {
         String rssi = String(WiFi.RSSI());        // ör. "-58"
         int16_t rx = 84 - (int16_t)(rssi.length() * 6);
         lcd.setCursor(rx, 40);

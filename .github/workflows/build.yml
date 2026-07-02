@@ -49,6 +49,7 @@ jobs:
           # LCD opsiyonel — config.h'de LCD_ENABLED açıksa gerekli (kapalıyken zararsız)
           arduino-cli lib install "Adafruit GFX Library"
           arduino-cli lib install "Adafruit PCD8544 Nokia 5110 LCD library"
+          arduino-cli lib install "QRCode"
 
       - name: Sürümü tag'den çıkar
         id: version

@@ -22,6 +22,8 @@
 
 // ─── Kurulum AP'i (ilk açılış / WiFi bağlanamadıysa) ─────────────────────────
 #define SETUP_AP_SSID         "pcswitch-setup"   // şifresiz AP
+#define SETUP_AP_IP           "192.168.4.1"
+#define SETUP_PAGE_URL        "http://192.168.4.1/config"  // kurulum QR hedefi
 
 // ─── LittleFS config dosyası ──────────────────────────────────────────────────
 #define CONFIG_FILE           "/config.json"
